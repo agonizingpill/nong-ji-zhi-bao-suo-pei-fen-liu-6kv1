@@ -8,3 +8,5 @@ SETTLEMENT_STATES=('draft','approved','booked')
 REPAIR_STATES=('reserved','running','completed')
 ISSUE_STATES=('issued','returned','consumed')
 FOLLOWUP_STATES=('review','rework','closed')
+
+DISPUTE_AUDIT_ACTIONS=('dispute_receipt_registered',)

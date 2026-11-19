@@ -22,7 +22,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 |---|---|---|---|
 |admin 质保主管|admin@gengchuan.local|Field2026!|台账编辑、受理、拆检、最终赔付/拒赔、旧件核验、结算核定和记账|
 |assessor 拆检评估员|assessor@gengchuan.local|Field2026!|新机登记、索赔、分流、拆检、旧件发件/收货、结算草稿；不可签署|
-|viewer 经销商观察员|viewer@gengchuan.local|Field2026!|只读九页及审计|
+|viewer 经销商观察员|viewer@gengchuan.local|Field2026!|只读十页及审计|
 
 ## 业务与页面
 
@@ -34,7 +34,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 5. 旧件返厂：索赔完成分流并有拆检意见后登记物流；每份索赔仅一单，实收序列必须匹配发件快照；收货证据不得覆盖，主管核验后冻结。
 6. 赔付结算：仅已赔付且旧件核验通过的现场索赔可生成费用核定单；Python Decimal 按配件费＋工时×费率计算金额上限；主管核定不得超额，核定后冻结金额，使用唯一记账凭证一次入账。
 
-历史数据为固定 seed=42 生成的 180 条**模拟**已结案索赔，只用于演示。ColumnTransformer 对机型和故障部位 One-hot 编码，对故障工时、机龄、渗漏数值标准化，LogisticRegression 分类；分层留出 25%（45条），训练集 135 条，报告留出 accuracy/ROC AUC 及编码后系数。输入来自领域表而非任意 JSON。数据不足40条拒绝训练；不把模型输出作为自动赔付依据。随机种子42、训练/留出划分固定，模型的概率是模拟数据上的演示估计，未作真实业务校准。
+历史数据为固定 seed=42 生成的 180 条**模拟**已结案索赔，只用于演示。ColumnTransformer 对机型和故障部位 One-hot 编码，对故障工时、机龄、渗漏数值标准化，LogisticRegression 分类；分层留出 25%（45条），训练集 135 条，报告留出 accuracy/ROC AUC 及编码后系数。输入来自领域表而非任意 JSON。**训练标签不再读 `Claim.disputed`**：只采用 `sample_labels` 中评分受理时冻结的标签（见第四轮扩展），冻结样本不足40条拒绝训练；不把模型输出作为自动赔付依据。随机种子42、训练/留出划分固定，模型的概率是模拟数据上的演示估计，未作真实业务校准。
 
 ### 一天的工作剧本
 
@@ -51,7 +51,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 |队列|Redis7 list；共享 artifacts 卷保存模型指标与心跳|
 |安全横切|JWT8小时、角色校验、PBKDF2口令、审计、请求追踪、全局错误恢复|
 
-`backend/src/models.py` 领域实体；`schemas.py` 请求约束；`claim_service.py` 状态与关联规则；`risk_model.py` 算法；`worker.py` 队列；`main.py` 路由；`middlewares.py` 请求追踪和错误恢复。`backend/scripts/seed_demo.py` 仅插入自然键缺失的演示记录，不覆盖修改。`frontend/src/pages/` 九业务页；`components/common.js` 共享导航、状态、标题和通知；`utils/api.js` API/会话/页面状态；`utils/format.js` 转义和格式化。
+`backend/src/models.py` 领域实体；`schemas.py` 请求约束；`claim_service.py` 状态与关联规则；`risk_model.py` 算法；`worker.py` 队列；`main.py` 路由；`middlewares.py` 请求追踪和错误恢复。`backend/scripts/seed_demo.py` 仅插入自然键缺失的演示记录，不覆盖修改。`frontend/src/pages/` 十业务页；`components/common.js` 共享导航、状态、标题和通知；`utils/api.js` API/会话/页面状态；`utils/format.js` 转义和格式化。
 
 角色、索赔状态、故障部位枚举分别在 `backend/src/constants.py` 与 `frontend/src/constants.js` 定义；请求部位在 `backend/src/schemas.py` 的 Literal 中约束；角色校验在 `security.py`/`main.py`，状态转换在 `claim_service.py`/`worker.py`。共用状态徽标在索赔/风险/拆检三页复用。
 
@@ -94,6 +94,24 @@ Seed 另有 `CL-RETURN-DEMO`（已赔付、可发件）和 `CL-SETTLE-DEMO`（�
 seed新增BAY-HYD(8h/日)、BAY-QUICK(4h/日)、BAY-OFF停用，以及hydraulic20/engine5/transmission3件备件。可用CL-RETURN-DEMO或CL-SETTLE-DEMO已赔付索赔演练预约→匹配领料→开工→完工→质量回访；异常再安排同索赔新预约返工后主管关闭。自然键只补缺失，重复seed不改已扣库存、维修实耗、工位容量、回访与原结算。新增5张表，不给原历史表加列，也不回填改变旧签结。
 
 当前范围：预约为按日工时额度，无具体起止时刻、跨工位调度或取消；完工超时只留主管依据，不重分配其他预约。工位停用只阻止新预约，已确认维修仍可履约；无工资、采购补货、拆单部分退料、仓库扫码或真实售后联系。回访是人工登记，不外发消息；异常关闭证明同索赔返工完工，不替代另一轮质量验收或重开原赔款。新增证据见 `test-artifacts/gb-1022/v3/`。
+
+## 争议回执与修订留痕（第四轮扩展）
+
+10. 争议回执登记：索赔结案后争议回执才陆续到达，且可能更正。主管在「10 争议回执」页登记带修订号的回执。`dispute_receipts` 只追加，`(claim_id, revision_no)` 唯一约束；同一修订号重复登记（含重试）返回 409，不新增任何样本。乱序到达的旧修订号（如先到 rev3 再到 rev2）同样留档，不覆盖、不删除。
+11. 评分受理时冻结标签：每次风险评分开始时先执行 `freeze_labels`——仅对**已有回执且尚未入样**的索赔，取当时已收到的最高修订号，写入 `sample_labels`（每索赔唯一一份，事务内行锁 + 二次查重防并发重复冻结）。没有任何回执的现场索赔暂不入样本；之后补到回执，会在下一次评分时首次入样。
+12. 更正不改历史：回执更正只是追加更高修订号的新行。已冻结的 `sample_labels` 永不更新，训练集与留出评估始终读取冻结标签，因此并发更正不会改变任何一次评分所用的 y。每次评分另写一条 `risk_scorings`，内含当次完整标签清单（claim/修订号/标签）与指标，页面可逐次查阅。
+13. 裁决与赔付独立：回执流程不回写 `Claim`、`Inspection`、`Settlement`，原风险概率、主管裁决和结案赔付均不受后续回执更正影响。
+
+|接口|权限/动作|
+|---|---|
+|GET /dispute-receipts、/sample-labels、/risk-scorings、/history-claims|三角色读取；`/history-claims` 仅返回历史已结案索赔的轻量字段，供回执登记选择|
+|POST /dispute-receipts|仅 admin 主管登记带修订号回执|
+
+新增 `dispute_models.py`（三张表，不给原历史表加列）、`dispute_service.py`（追加登记、最高修订冻结、评分清单与留痕）、`dispute_schemas.py`、`dispute_routes.py`；`risk_model.py` 改为只从 `sample_labels` 取标签并在训练前冻结，`worker.py` 在评分成功后写 `risk_scorings`；前端新增 `pages/disputes.js` 第十页并接入导航与 store，风险页札记同步说明标签来源。
+
+Seed 为 180 条历史索赔各补一张 rev1 回执（标签与原模拟争议结果一致，训练池仍为 180 条）；`HIST-0001` 额外演示乱序（rev2 旧件晚到）与更正（rev3 翻转结论）；`CL-RETURN-DEMO` 有 rev1 回执可入样，`CL-SETTLE-DEMO` 无回执，演示「无回执暂不入样本」。自然键只补缺失，重复 seed 不产生重复回执，也不预冻结标签或预写评分。
+
+当前范围：回执为人工结构化登记，不接收经销商邮件或附件；修订号由主管按递增填写，系统只保证同号唯一与取最大值，不自动推断下一个号；冻结发生在评分受理时刻，历史已评分结果不重训、不回滚；`risk_scorings` 仅作留痕查询，不驱动自动赔付。
 
 ## 已知范围
 
